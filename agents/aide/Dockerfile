@@ -1,4 +1,5 @@
-FROM mlebench-env
+ARG BASE_IMAGE=mlebench-env
+FROM ${BASE_IMAGE}
 
 # where to put submission.csv, will be extracted
 ARG SUBMISSION_DIR

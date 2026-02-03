@@ -2,6 +2,7 @@ FROM ubuntu:20.04
 
 # Avoid interactive dialog from apt-get and other packages requiring configuration
 ENV DEBIAN_FRONTEND=noninteractive
+ENV CONDA_PLUGINS_AUTO_ACCEPT_TOS=yes
 
 # install basic packages
 RUN apt-get update && apt-get install -y \
@@ -29,8 +30,15 @@ RUN apt-get update && apt-get install -y \
     && pip install jupyter \
     && rm -rf /var/lib/apt/lists/* # removes cache
 
+# Detect architecture and download appropriate Miniconda
+ARG TARGETARCH
 RUN pip install virtualenv \
-    && wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
+    && if [ "$TARGETARCH" = "arm64" ]; then \
+         MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh"; \
+       else \
+         MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"; \
+       fi \
+    && wget "$MINICONDA_URL" -O /tmp/miniconda.sh \
     && bash /tmp/miniconda.sh -b -p /opt/conda \
     && rm /tmp/miniconda.sh \
     && /opt/conda/bin/conda init

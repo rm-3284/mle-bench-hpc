@@ -1,4 +1,5 @@
 FROM mlebench-env
+ENV CONDA_PLUGINS_AUTO_ACCEPT_TOS=yes
 
 # where to put submission.csv, will be extracted
 ARG SUBMISSION_DIR
