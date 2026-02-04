@@ -91,44 +91,6 @@ sbatch scripts_hpc/slurm_agent.sh spaceship-titanic http://node123:5000
 sbatch scripts_hpc/slurm_agent.sh spaceship-titanic auto:<grading-job-id>
 ```
 
-### Option B: Interactive
-
-On a compute node:
-
-```bash
-COMPETITION="spaceship-titanic"
-GRADING_SERVER="http://grading-node:5000"
-DATA_DIR="/path/to/mlebench/data"
-SIF_IMAGE="/path/to/aide.sif"
-OUTPUT_DIR="/scratch/$USER/run_001"
-
-mkdir -p ${OUTPUT_DIR}/{submission,logs,code,overlay}
-
-# Prepare instruction files with correct grading server URL
-apptainer exec ${SIF_IMAGE} cat /home/instructions.txt > ${OUTPUT_DIR}/overlay/instructions.txt
-sed -i "s|http://localhost:5000|${GRADING_SERVER}|g" ${OUTPUT_DIR}/overlay/instructions.txt
-
-apptainer exec ${SIF_IMAGE} cat /home/validate_submission.sh > ${OUTPUT_DIR}/overlay/validate_submission.sh
-sed -i "s|http://localhost:5000|${GRADING_SERVER}|g" ${OUTPUT_DIR}/overlay/validate_submission.sh
-chmod +x ${OUTPUT_DIR}/overlay/validate_submission.sh
-
-# Run agent
-apptainer exec \
-    --contain \
-    --cleanenv \
-    --env COMPETITION_ID=${COMPETITION} \
-    --env GRADING_SERVER=${GRADING_SERVER} \
-    --env TIME_LIMIT_SECS=14400 \
-    --bind ${DATA_DIR}/${COMPETITION}/prepared/public:/home/data:ro \
-    --bind ${OUTPUT_DIR}/submission:/home/submission \
-    --bind ${OUTPUT_DIR}/logs:/home/logs \
-    --bind ${OUTPUT_DIR}/code:/home/code \
-    --bind ${OUTPUT_DIR}/overlay/instructions.txt:/home/instructions.txt:ro \
-    --bind ${OUTPUT_DIR}/overlay/validate_submission.sh:/home/validate_submission.sh:ro \
-    ${SIF_IMAGE} \
-    /entrypoint_hpc.sh bash /home/agent/start.sh
-```
-
 Add `--nv` flag for GPU support.
 
 ## Step 4: Grade Submission
