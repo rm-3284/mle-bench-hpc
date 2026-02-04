@@ -30,7 +30,6 @@ docker build -t aide agents/aide/ \
 ```
 
 Then you can save your docker as .tar file, transfer to HPC and convert:
-```
 
 Transfer to HPC and convert:
 ```
@@ -116,3 +115,6 @@ Make sure to edit `scripts_hpc/slurm_hetjob.sh` to set your paths:
 - `DATA_DIR`: path to data  
 - `SIF_IMAGE`: path to Apptainer image
 - `OUTPUT_BASE`: base output directory
+
+## Todo
+- [ ] Update and test heterogeneous scripts on della
