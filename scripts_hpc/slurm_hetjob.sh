@@ -40,13 +40,10 @@ GRADING_PORT=5000
 # =============================================================================
 # Setup
 # =============================================================================
-set -euo pipefail
+set -eo pipefail
 
 module purge
 module load anaconda3/2024.2
-module load apptainer
-
-conda activate YOUR_ENV
 
 OUTPUT_DIR="${OUTPUT_BASE}/${COMPETITION}_${SLURM_JOB_ID}"
 mkdir -p "${OUTPUT_DIR}"/{submission,logs,code}
@@ -71,7 +68,7 @@ rm -f "$ADDR_FILE"
 # =============================================================================
 # Start grading server on CPU node (het-group=0)
 # =============================================================================
-echo "[het-group=0] Starting grading server on CPU node..."
+echo "[het-group=0] Starting grading server on CPU node (containerized)..."
 
 srun --het-group=0 --ntasks=1 bash -lc "
   set -e
@@ -79,15 +76,21 @@ srun --het-group=0 --ntasks=1 bash -lc "
   GRADING_HOST=\$(hostname -f)
   echo \"http://\${GRADING_HOST}:${GRADING_PORT}\" > \"$ADDR_FILE\"
   echo \"Grading server starting on \${GRADING_HOST}:${GRADING_PORT}\"
-
-  module load anaconda3/2024.2
-  conda activate mlebench
   
-  python ${MLEBENCH_DIR}/environment/run_grading_server.py \
-    --competition-id ${COMPETITION} \
-    --data-dir ${DATA_DIR} \
-    --host 0.0.0.0 \
-    --port ${GRADING_PORT}
+  # Run grading server
+  apptainer exec \
+    --contain \
+    --cleanenv \
+    --no-home \
+    --writable-tmpfs \
+    --pwd /tmp \
+    --bind ${DATA_DIR}:/data:ro \
+    ${SIF_IMAGE} \
+    /opt/conda/bin/conda run -n mleb python /mlebench/environment/run_grading_server.py \
+      --competition-id ${COMPETITION} \
+      --data-dir /data \
+      --host 0.0.0.0 \
+      --port ${GRADING_PORT}
 " &
 
 GRADING_PID=$!
@@ -123,15 +126,19 @@ srun --het-group=1 --ntasks=1 bash -lc "
   
   # Verify grading server is reachable
   if curl -s \"${GRADING_SERVER}/health\" > /dev/null 2>&1; then
-    echo \"✓ Grading server is reachable\"
+    echo \"Grading server is reachable\"
   else
-    echo \"✗ Cannot reach grading server at ${GRADING_SERVER}\"
+    echo \"Cannot reach grading server at ${GRADING_SERVER}\"
     exit 1
   fi
+  
+  # Clear host conda environment before running container
+  unset CONDA_EXE CONDA_PREFIX CONDA_PYTHON_EXE CONDA_DEFAULT_ENV CONDA_SHLVL
   
   # Run agent in Apptainer
   apptainer exec --nv \
     --contain \
+    --cleanenv \
     --env COMPETITION_ID=${COMPETITION} \
     --env GRADING_SERVER=${GRADING_SERVER} \
     --env TIME_LIMIT_SECS=${TIME_LIMIT_SECS} \

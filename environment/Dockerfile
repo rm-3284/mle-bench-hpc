@@ -87,11 +87,13 @@ COPY environment/instructions.txt /home/instructions.txt
 COPY environment/instructions_obfuscated.txt /home/instructions_obfuscated.txt
 COPY environment/validate_submission.sh /home/validate_submission.sh
 COPY environment/entrypoint.sh /entrypoint.sh
+COPY environment/entrypoint_hpc.sh /entrypoint_hpc.sh
+# COPY environment/run_grading_server.py /private/run_grading_server.py
 
 # Create nonroot user; make entrypoint executable
 RUN useradd -m nonroot \
     && mkdir /home/submission \
-    && chmod +x /entrypoint.sh
+    && chmod +x /entrypoint.sh /entrypoint_hpc.sh
 
 WORKDIR /home
 

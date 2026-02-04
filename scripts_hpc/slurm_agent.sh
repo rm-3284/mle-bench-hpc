@@ -19,11 +19,9 @@ SIF_IMAGE="/path/to/images/aide.sif"
 OUTPUT_BASE="/scratch/$USER/mlebench"
 TIME_LIMIT_SECS=14000
 
-set -euo pipefail
+set -eo pipefail
 
 module purge
-module load anaconda3/2024.2
-module load apptainer
 
 mkdir -p slurm_output/mlebench
 
@@ -64,9 +62,31 @@ else
     exit 1
 fi
 
+OVERLAY_DIR="${OUTPUT_DIR}/overlay"
+mkdir -p "${OVERLAY_DIR}"
+
+echo "Preparing instruction files with grading server URL: ${GRADING_SERVER}"
+
+# Extract and modify instructions.txt
+apptainer exec ${SIF_IMAGE} cat /home/instructions.txt > "${OVERLAY_DIR}/instructions.txt"
+sed -i "s|http://localhost:5000|${GRADING_SERVER}|g" "${OVERLAY_DIR}/instructions.txt"
+
+# Extract and modify instructions_obfuscated.txt
+apptainer exec ${SIF_IMAGE} cat /home/instructions_obfuscated.txt > "${OVERLAY_DIR}/instructions_obfuscated.txt"
+sed -i "s|http://localhost:5000|${GRADING_SERVER}|g" "${OVERLAY_DIR}/instructions_obfuscated.txt"
+
+# Extract and modify validate_submission.sh
+apptainer exec ${SIF_IMAGE} cat /home/validate_submission.sh > "${OVERLAY_DIR}/validate_submission.sh"
+sed -i "s|http://localhost:5000|${GRADING_SERVER}|g" "${OVERLAY_DIR}/validate_submission.sh"
+chmod +x "${OVERLAY_DIR}/validate_submission.sh"
+
 echo "Starting agent..."
-apptainer exec --nv \
+unset CONDA_EXE CONDA_PREFIX CONDA_PYTHON_EXE CONDA_DEFAULT_ENV CONDA_SHLVL
+
+# Add --nv flag below if GPU is needed
+apptainer exec \
     --contain \
+    --cleanenv \
     --env COMPETITION_ID=${COMPETITION} \
     --env GRADING_SERVER=${GRADING_SERVER} \
     --env TIME_LIMIT_SECS=${TIME_LIMIT_SECS} \
@@ -74,6 +94,9 @@ apptainer exec --nv \
     --bind ${OUTPUT_DIR}/submission:/home/submission \
     --bind ${OUTPUT_DIR}/logs:/home/logs \
     --bind ${OUTPUT_DIR}/code:/home/code \
+    --bind ${OVERLAY_DIR}/instructions.txt:/home/instructions.txt:ro \
+    --bind ${OVERLAY_DIR}/instructions_obfuscated.txt:/home/instructions_obfuscated.txt:ro \
+    --bind ${OVERLAY_DIR}/validate_submission.sh:/home/validate_submission.sh:ro \
     ${SIF_IMAGE} \
     /entrypoint_hpc.sh bash /home/agent/start.sh
 
@@ -90,4 +113,3 @@ echo ""
 echo "To grade:"
 echo "  mlebench grade --submission ${OUTPUT_DIR}/submission/submission.csv --competition ${COMPETITION}"
 echo "=============================================="
-

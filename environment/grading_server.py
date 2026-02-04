@@ -28,7 +28,6 @@ def validate():
     try:
         result = run_validation(submission_path)
     except Exception as e:
-        # Server error
         return jsonify({"error": "An unexpected error occurred.", "details": str(e)}), 500
 
     return jsonify({"result": result})

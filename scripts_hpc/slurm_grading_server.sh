@@ -9,15 +9,13 @@
 #SBATCH --output=slurm_output/mlebench/grading-%j.out
 
 COMPETITION="${1:-spaceship-titanic}"
-MLEBENCH_DIR="/path/to/mle-bench"
 DATA_DIR="/path/to/mlebench/data"
+SIF_IMAGE="/path/to/images/mlebench-env.sif"
 GRADING_PORT=5000
 
-set -euo pipefail
+set -eo pipefail
 
 module purge
-module load anaconda3/2024.2
-conda activate YOUR_ENV
 
 mkdir -p slurm_output/mlebench
 
@@ -29,23 +27,33 @@ GRADING_HOST=$(hostname -f)
 echo "http://${GRADING_HOST}:${GRADING_PORT}" > "$ADDR_FILE"
 
 echo "=============================================="
-echo "Grading Server"
+echo "Grading Server (Containerized)"
 echo "=============================================="
 echo "Job ID:      $SLURM_JOB_ID"
 echo "Competition: $COMPETITION"
 echo "Host:        $GRADING_HOST"
 echo "Port:        $GRADING_PORT"
 echo "Address:     http://${GRADING_HOST}:${GRADING_PORT}"
+echo "Image:       $SIF_IMAGE"
 echo ""
 echo "Address file: $ADDR_FILE"
 echo ""
 echo "Use this in agent job:"
-echo "  GRADING_SERVER=http://${GRADING_HOST}:${GRADING_PORT}"
+echo "  sbatch slurm_agent.sh ${COMPETITION} auto:${SLURM_JOB_ID}"
 echo "=============================================="
 
-python "${MLEBENCH_DIR}/environment/run_grading_server.py" \
-    --competition-id "$COMPETITION" \
-    --data-dir "$DATA_DIR" \
-    --host 0.0.0.0 \
-    --port "$GRADING_PORT"
+apptainer exec \
+    --contain \
+    --cleanenv \
+    --no-home \
+    --writable-tmpfs \
+    --pwd /tmp \
+    --bind ${DATA_DIR}:/data:ro \
+    ${SIF_IMAGE} \
+    /opt/conda/bin/conda run -n mleb python /mlebench/environment/run_grading_server.py \
+        --competition-id "${COMPETITION}" \
+        --data-dir /data \
+        --host 0.0.0.0 \
+        --port ${GRADING_PORT}
+
 
