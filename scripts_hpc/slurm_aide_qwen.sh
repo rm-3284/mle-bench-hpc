@@ -30,7 +30,7 @@ MODEL_SIZE="${3:-30b}"  # 30b or 80b
 MLEBENCH_DIR="$(pwd)"
 DATA_DIR="${MLEBENCH_DIR}/data"
 SIF_IMAGE="${MLEBENCH_DIR}/containers/aide-qwen-minimal.sif"
-OUTPUT_BASE="/scratch/$USER/mlebench-runs"
+OUTPUT_BASE="${MLEBENCH_DIR}/runs"
 GRADING_SERVER_ARG="${4:-}"
 
 # Agent configuration
@@ -48,8 +48,11 @@ fi
 
 VLLM_API_BASE="http://localhost:${VLLM_PORT}/v1"
 
-# Output directory
-OUTPUT_DIR="${OUTPUT_BASE}/${COMPETITION}_${MODEL_NAME}_${SLURM_JOB_ID}"
+# Output directory with run-group structure
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H-%M-%S-UTC")
+RUN_GROUP_DIR="${OUTPUT_BASE}/${TIMESTAMP}_run-group_aide"
+RUN_ID="${SLURM_JOB_ID}"
+OUTPUT_DIR="${RUN_GROUP_DIR}/${COMPETITION}_${RUN_ID}"
 mkdir -p "${OUTPUT_DIR}"/{submission,logs,code,workspaces}
 
 # =============================================================================
@@ -63,6 +66,7 @@ echo "Node:           $SLURM_NODELIST"
 echo "Competition:    $COMPETITION"
 echo "Model:          $MODEL_NAME"
 echo "vLLM Endpoint:  $VLLM_API_BASE"
+echo "Run Group:      $RUN_GROUP_DIR"
 echo "Output Dir:     $OUTPUT_DIR"
 echo "Time Limit:     $TIME_LIMIT_SECS seconds"
 echo "Step Limit:     $STEP_LIMIT steps"
@@ -197,6 +201,7 @@ echo "=============================================="
 echo "Exit Code:   $AGENT_EXIT_CODE"
 echo "Competition: $COMPETITION"
 echo "Model:       $MODEL_NAME"
+echo "Run Group:   $RUN_GROUP_DIR"
 echo ""
 echo "Results:"
 echo "  Submission: ${OUTPUT_DIR}/submission/"
