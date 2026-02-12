@@ -1,0 +1,93 @@
+Bootstrap: docker
+From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+%labels
+    Author rm4411
+    Version v1.0
+    Description AIDE agent with Qwen model support via local vLLM
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+    export SUBMISSION_DIR=/home/submission
+    export LOGS_DIR=/home/logs
+    export CODE_DIR=/home/code
+    export AGENT_DIR=/home/agent
+
+%post
+    # Update and install dependencies
+    apt-get update && apt-get install -y \
+        wget \
+        git \
+        build-essential \
+        curl \
+        ca-certificates \
+        ffmpeg \
+        libsm6 \
+        libxext6 \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Install Miniconda
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
+    bash /tmp/miniconda.sh -b -p /opt/conda
+    rm /tmp/miniconda.sh
+    export PATH=/opt/conda/bin:$PATH
+
+    # Accept conda TOS and configure
+    conda config --set channel_priority flexible
+    conda config --add channels conda-forge
+    yes | conda tos accept || true
+
+    # Create agent environment
+    conda create -n agent python=3.11 -y -c conda-forge
+    . /opt/conda/etc/profile.d/conda.sh
+    conda activate agent
+
+    # Install AIDE and dependencies
+    # Note: Adjust requirements as needed based on agents/aide/requirements.txt
+    pip install --no-cache-dir \
+        aideml \
+        openai \
+        anthropic \
+        google-generativeai \
+        httpx==0.27.2 \
+        pandas \
+        numpy \
+        scikit-learn \
+        matplotlib \
+        seaborn \
+        jupyter \
+        kaggle
+
+    # Clean up
+    conda clean -afy
+
+    # Create necessary directories
+    mkdir -p /home/submission /home/logs /home/code /home/agent /home/data
+
+%files
+    # Copy AIDE agent files
+    # Build this from the mle-bench-hpc directory
+    # If files don't exist, they will be created or bound at runtime
+    agents/aide/start.sh /home/agent/start.sh
+    agents/aide/additional_notes.txt /home/agent/additional_notes.txt
+    environment/instructions.txt /home/instructions.txt
+    environment/instructions_obfuscated.txt /home/instructions_obfuscated.txt
+    environment/validate_submission.sh /home/validate_submission.sh
+
+%runscript
+    #!/bin/bash
+    exec "$@"
+
+%help
+    AIDE agent container with support for local Qwen models via vLLM.
+    
+    The container expects vLLM servers to be running and accessible at:
+    - Qwen3-30B: http://localhost:8000/v1
+    - Qwen3-80B: http://localhost:8001/v1
+    
+    Environment variables:
+        OPENAI_API_KEY      - Set to "dummy" for local vLLM
+        OPENAI_API_BASE     - Set to vLLM endpoint (e.g., http://localhost:8000/v1)
+        COMPETITION_ID      - Competition to run
+        GRADING_SERVER      - URL of grading server
+        TIME_LIMIT_SECS     - Time limit for agent run

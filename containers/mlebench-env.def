@@ -1,0 +1,108 @@
+Bootstrap: docker
+From: ubuntu:22.04
+
+%labels
+    Author rm4411
+    Version v1.0
+    Description MLEBench base environment with grading server support
+
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_PLUGINS_AUTO_ACCEPT_TOS=yes
+    export PATH=/opt/conda/bin:$PATH
+
+%post
+    # Avoid interactive dialog
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_PLUGINS_AUTO_ACCEPT_TOS=yes
+
+    # Install basic packages
+    apt-get update && apt-get install -y \
+        curl \
+        wget \
+        git \
+        vim \
+        nano \
+        unzip \
+        zip \
+        p7zip-full \
+        python3 \
+        python3-pip \
+        python3-venv \
+        python3-dev \
+        python-is-python3 \
+        build-essential \
+        openssh-server \
+        tmux \
+        gettext \
+        sudo \
+        ffmpeg \
+        libsm6 \
+        libxext6 \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Install jupyter
+    pip3 install jupyter virtualenv
+
+    # Install Miniconda
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
+    bash /tmp/miniconda.sh -b -p /opt/conda
+    rm /tmp/miniconda.sh
+    export PATH=/opt/conda/bin:$PATH
+    /opt/conda/bin/conda init
+
+    # Accept conda TOS
+    conda config --set channel_priority flexible
+    conda config --add channels conda-forge
+    yes | conda tos accept || true
+
+    # Create mlebench environment
+    conda create -n mleb python=3.11 -y -c conda-forge
+    . /opt/conda/etc/profile.d/conda.sh
+    conda activate mleb
+
+    # Install mlebench and dependencies
+    pip install --no-cache-dir \
+        pytest \
+        omegaconf \
+        python-dotenv \
+        docker \
+        flask \
+        flask-cors \
+        requests \
+        pandas \
+        numpy \
+        scikit-learn \
+        matplotlib \
+        seaborn \
+        tqdm \
+        pyyaml
+
+    # Install mlebench package
+    # Note: This assumes mlebench is available, adjust as needed
+    # pip install mlebench
+
+    # Clean up
+    conda clean -afy
+    apt-get clean
+
+    # Create necessary directories
+    mkdir -p /mlebench /data /home/submission /home/logs /home/code
+
+%runscript
+    #!/bin/bash
+    exec "$@"
+
+%help
+    MLEBench base environment container.
+    
+    Contains:
+    - Python 3.11 with conda environment 'mleb'
+    - MLEBench dependencies
+    - Flask for grading server
+    - Data science libraries
+    
+    Use for:
+    - Running grading server
+    - Running mlebench CLI commands
+    - General mlebench environment

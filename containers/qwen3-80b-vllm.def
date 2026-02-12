@@ -1,0 +1,90 @@
+Bootstrap: docker
+From: nvidia/cuda:12.1.0-devel-ubuntu22.04
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
+%post
+    # Update and install basic dependencies
+    apt-get update && apt-get install -y \
+        wget \
+        git \
+        build-essential \
+        curl \
+        ca-certificates \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Install Miniconda
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
+    bash /tmp/miniconda.sh -b -p /opt/conda
+    rm /tmp/miniconda.sh
+    export PATH=/opt/conda/bin:$PATH
+
+    # Accept conda TOS and configure to use conda-forge
+    conda config --set channel_priority flexible
+    conda config --add channels conda-forge
+    yes | conda tos accept || true
+
+    # Create conda environment and install vLLM
+    conda create -n vllm python=3.11 -y -c conda-forge
+    . /opt/conda/etc/profile.d/conda.sh
+    conda activate vllm
+
+    # Install vLLM with CUDA support
+    pip install --no-cache-dir vllm==0.6.4.post1
+    pip install --no-cache-dir huggingface-hub
+
+    # Pre-download the model (optional, can be done at runtime)
+    # Uncomment if you want to bake the model into the container
+    # python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-Next-80B-A3B-Instruct')"
+
+    # Clean up
+    conda clean -a -y
+    apt-get clean
+
+%runscript
+    #!/bin/bash
+    . /opt/conda/etc/profile.d/conda.sh
+    conda activate vllm
+    
+    # Default values
+    PORT=${PORT:-8001}
+    MODEL=${MODEL:-"Qwen/Qwen3-Next-80B-A3B-Instruct"}
+    TENSOR_PARALLEL=${TENSOR_PARALLEL:-2}
+    GPU_MEMORY=${GPU_MEMORY:-0.95}
+    MAX_MODEL_LEN=${MAX_MODEL_LEN:-32768}
+    
+    echo "Starting vLLM server for $MODEL on port $PORT"
+    echo "Tensor parallel size: $TENSOR_PARALLEL"
+    echo "GPU memory utilization: $GPU_MEMORY"
+    echo "Max model length: $MAX_MODEL_LEN"
+    
+    python -m vllm.entrypoints.openai.api_server \
+        --model "$MODEL" \
+        --port "$PORT" \
+        --tensor-parallel-size "$TENSOR_PARALLEL" \
+        --gpu-memory-utilization "$GPU_MEMORY" \
+        --max-model-len "$MAX_MODEL_LEN" \
+        --trust-remote-code \
+        --served-model-name "qwen3-80b"
+
+%labels
+    Author rm4411
+    Version v1.0
+    Description vLLM server for Qwen3-Next-80B-A3B-Instruct
+
+%help
+    This container runs a vLLM server for the Qwen3-Next-80B-A3B-Instruct model.
+    
+    Usage:
+        apptainer run --nv qwen3-80b-vllm.sif
+    
+    Environment variables:
+        PORT            - API port (default: 8001)
+        MODEL           - Model name (default: Qwen/Qwen3-Next-80B-A3B-Instruct)
+        TENSOR_PARALLEL - Number of GPUs for tensor parallelism (default: 2)
+        GPU_MEMORY      - GPU memory utilization fraction (default: 0.95)
+        MAX_MODEL_LEN   - Maximum model context length (default: 32768)
+        HF_TOKEN        - Hugging Face token for private models

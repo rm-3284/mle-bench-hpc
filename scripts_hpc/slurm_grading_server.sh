@@ -9,8 +9,8 @@
 #SBATCH --output=slurm_output/mlebench/grading-%j.out
 
 COMPETITION="${1:-spaceship-titanic}"
-DATA_DIR="/path/to/mlebench/data"
-SIF_IMAGE="/path/to/images/mlebench-env.sif"
+DATA_DIR="/scratch/gpfs/KARTHIKN/rm4411/mle-bench-hpc/data"
+SIF_IMAGE="/scratch/gpfs/KARTHIKN/rm4411/mle-bench-hpc/containers/mlebench-env.sif"
 GRADING_PORT=5000
 
 set -eo pipefail

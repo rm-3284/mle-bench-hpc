@@ -141,3 +141,55 @@ aide/obfuscated:
     <<: *env_vars
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     OBFUSCATE: "true"
+
+aide/qwen3-30b:
+  <<: *defaults
+  kwargs:
+    <<: *kwargs_common
+    agent.code.model: qwen3-30b
+    agent.feedback.model: qwen3-30b
+    agent.steps: *step_count
+    agent.code.api_base: http://localhost:8000/v1
+    agent.feedback.api_base: http://localhost:8000/v1
+  env_vars:
+    <<: *env_vars
+    OPENAI_API_KEY: "dummy-key"
+
+aide/qwen3-80b:
+  <<: *defaults
+  kwargs:
+    <<: *kwargs_common
+    agent.code.model: qwen3-80b
+    agent.feedback.model: qwen3-80b
+    agent.steps: *step_count
+    agent.code.api_base: http://localhost:8001/v1
+    agent.feedback.api_base: http://localhost:8001/v1
+  env_vars:
+    <<: *env_vars
+    OPENAI_API_KEY: "dummy-key"
+
+aide/qwen3-30b-dev:
+  <<: *defaults
+  kwargs:
+    <<: *kwargs_common
+    agent.code.model: qwen3-30b
+    agent.feedback.model: qwen3-30b
+    agent.steps: 8
+    agent.code.api_base: http://localhost:8000/v1
+    agent.feedback.api_base: http://localhost:8000/v1
+  env_vars:
+    <<: *env_vars
+    OPENAI_API_KEY: "dummy-key"
+
+aide/qwen3-80b-dev:
+  <<: *defaults
+  kwargs:
+    <<: *kwargs_common
+    agent.code.model: qwen3-80b
+    agent.feedback.model: qwen3-80b
+    agent.steps: 8
+    agent.code.api_base: http://localhost:8001/v1
+    agent.feedback.api_base: http://localhost:8001/v1
+  env_vars:
+    <<: *env_vars
+    OPENAI_API_KEY: "dummy-key"
