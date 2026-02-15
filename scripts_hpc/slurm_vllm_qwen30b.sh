@@ -2,8 +2,9 @@
 #SBATCH --job-name=vllm-qwen30b
 #SBATCH --output=logs/vllm-qwen30b-%j.out
 #SBATCH --error=logs/vllm-qwen30b-%j.err
+#SBATCH --account=mle_agent
 #SBATCH --nodes=1
-#SBATCH --partition=gpu-short
+#SBATCH --partition=pli
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
@@ -19,7 +20,15 @@ echo "Starting Qwen3-30B vLLM Server"
 echo "========================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
-echo "GPUs: $CUDA_VISIBLE_DEVICES"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
+
+# Detect GPUs
+if command -v nvidia-smi &> /dev/null; then
+    GPU_COUNT=$(nvidia-smi --list-gpus | wc -l)
+    echo "Detected GPUs: $GPU_COUNT"
+else
+    echo "Note: nvidia-smi not available (normal on login node)"
+fi
 echo "========================================"
 
 # Configuration
@@ -27,7 +36,7 @@ CONTAINER_DIR="$(pwd)/containers"
 CONTAINER_FILE="${CONTAINER_DIR}/qwen3-30b-vllm.sif"
 PORT=${PORT:-8000}
 TENSOR_PARALLEL=${TENSOR_PARALLEL:-1}
-HF_HOME=${HF_HOME:-"$HOME/.cache/huggingface"}
+HF_HOME=${HF_HOME:-"/scratch/gpfs/KARTHIKN/rm4411/huggingface-cache"}
 
 # Check if container exists
 if [ ! -f "$CONTAINER_FILE" ]; then
@@ -40,6 +49,15 @@ fi
 export APPTAINERENV_PORT=$PORT
 export APPTAINERENV_TENSOR_PARALLEL=$TENSOR_PARALLEL
 export APPTAINERENV_HF_TOKEN=$HF_TOKEN
+
+# Ensure CUDA_VISIBLE_DEVICES is set for container
+if [ -z "${CUDA_VISIBLE_DEVICES}" ]; then
+    export CUDA_VISIBLE_DEVICES=0
+fi
+
+# Create HF cache directory if it doesn't exist
+mkdir -p "$HF_HOME"
+echo "HF Cache directory: $HF_HOME"
 
 # Print server info
 echo ""

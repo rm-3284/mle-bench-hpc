@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=mlebench-grading
-#SBATCH --account=YOUR_ACCOUNT
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
