@@ -63,18 +63,22 @@ From: ubuntu:22.04
 
     # Install mlebench and dependencies
     pip install --no-cache-dir \
+        appdirs \
         pytest \
         omegaconf \
         python-dotenv \
         docker \
+        diskcache \
         flask \
         flask-cors \
+        py7zr \
         requests \
         pandas \
         numpy \
         scikit-learn \
         matplotlib \
         seaborn \
+        tenacity \
         tqdm \
         pyyaml
 

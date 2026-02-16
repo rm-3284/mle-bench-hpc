@@ -33,11 +33,11 @@ From: nvidia/cuda:12.8.0-devel-ubuntu22.04
     . /opt/conda/etc/profile.d/conda.sh
     conda activate vllm
 
-    # Install PyTorch with explicit CUDA 12 support
-    pip install --no-cache-dir torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121
+    # Install PyTorch with explicit CUDA 12.8 support
+    pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
     
-    # Install vLLM with CUDA support
-    pip install --no-cache-dir vllm==0.6.4.post1
+    # Install latest vLLM with CUDA support (supports Qwen3)
+    pip install --no-cache-dir vllm --upgrade
     pip install --no-cache-dir huggingface-hub
 
     # Pre-download the model (optional, can be done at runtime)
@@ -67,7 +67,8 @@ From: nvidia/cuda:12.8.0-devel-ubuntu22.04
     
     # Default values
     PORT=${PORT:-8001}
-    MODEL=${MODEL:-"Qwen/Qwen3-Next-80B-A3B-Instruct"}
+    # Use local snapshot path instead of repo name to avoid HF lookups
+    MODEL=${MODEL:-"/root/.cache/huggingface/models--Qwen--Qwen3-Next-80B-A3B-Instruct/snapshots/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7"}
     TENSOR_PARALLEL=${TENSOR_PARALLEL:-2}
     GPU_MEMORY=${GPU_MEMORY:-0.95}
     MAX_MODEL_LEN=${MAX_MODEL_LEN:-32768}

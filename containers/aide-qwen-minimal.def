@@ -43,8 +43,9 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
     conda activate agent
 
     # Install AIDE and dependencies
+    # AIDE was edited to allow vllm access
     pip install --no-cache-dir \
-        aideml \
+        git+https://github.com/rm-3284/aideml \
         openai \
         anthropic \
         google-generativeai \
