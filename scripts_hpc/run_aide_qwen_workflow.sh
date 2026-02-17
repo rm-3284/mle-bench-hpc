@@ -6,18 +6,28 @@ set -e
 
 COMPETITION="${1:-spaceship-titanic}"
 MODEL_SIZE="${2:-30b}"  # 30b or 80b
-PARTITION="${3:-gpu-short}"
+PARTITION="${3:-}"
+AGENT_PARTITION="${4:-}"
+CLEANUP_MODE="${5:-on}"
 
 if [ -z "$COMPETITION" ]; then
-    echo "Usage: $0 <competition> [model_size] [partition]"
+    echo "Usage: $0 <competition> [model_size] [vllm_partition] [agent_partition] [cleanup]"
     echo ""
     echo "Arguments:"
     echo "  competition   - Competition ID (e.g., spaceship-titanic)"
     echo "  model_size    - Model size: 30b or 80b (default: 30b)"
-    echo "  partition     - SLURM partition (default: gpu-short)"
+    echo "  vllm_partition  - SLURM partition for vLLM (default: script default)"
+    echo "  agent_partition - SLURM partition for AIDE agent (default: script default)"
+    echo "  cleanup         - on|off to schedule cleanup job (default: on)"
+    echo "                 Cleanup job cancels grading + vLLM after AIDE finishes"
     echo ""
     echo "Example:"
-    echo "  $0 spaceship-titanic 30b gpu-short"
+    echo "  $0 spaceship-titanic 30b gpu-short cpu on"
+    exit 1
+fi
+
+if [ "${CLEANUP_MODE}" != "on" ] && [ "${CLEANUP_MODE}" != "off" ]; then
+    echo "Error: cleanup must be 'on' or 'off'"
     exit 1
 fi
 
@@ -26,7 +36,9 @@ echo "AIDE + Qwen Workflow Setup"
 echo "=============================================="
 echo "Competition: $COMPETITION"
 echo "Model:       Qwen3-${MODEL_SIZE}"
-echo "Partition:   $PARTITION"
+echo "vLLM Partition:  ${PARTITION:-script default}"
+echo "Agent Partition: ${AGENT_PARTITION:-script default}"
+echo "Cleanup:     ${CLEANUP_MODE}"
 echo "=============================================="
 echo ""
 
@@ -34,7 +46,7 @@ echo ""
 # Step 1: Start Grading Server
 # =============================================================================
 echo "Step 1: Starting grading server..."
-GRADING_JOB=$(sbatch --parsable --partition=cpu scripts_hpc/slurm_grading_server.sh "$COMPETITION")
+GRADING_JOB=$(sbatch --parsable scripts_hpc/slurm_grading_server.sh "$COMPETITION")
 echo "  Grading server job: $GRADING_JOB"
 echo "  Waiting for grading server to start..."
 
@@ -75,7 +87,11 @@ echo ""
 # Step 2: Start vLLM Server
 # =============================================================================
 echo "Step 2: Starting vLLM server for Qwen3-${MODEL_SIZE}..."
-VLLM_JOB=$(sbatch --parsable --partition="$PARTITION" scripts_hpc/slurm_vllm_qwen${MODEL_SIZE}.sh)
+if [ -n "${PARTITION}" ]; then
+    VLLM_JOB=$(sbatch --parsable --partition="${PARTITION}" scripts_hpc/slurm_vllm_qwen${MODEL_SIZE}.sh)
+else
+    VLLM_JOB=$(sbatch --parsable scripts_hpc/slurm_vllm_qwen${MODEL_SIZE}.sh)
+fi
 echo "  vLLM server job: $VLLM_JOB"
 echo "  Waiting for vLLM server to start (this may take 5-10 minutes)..."
 
@@ -143,19 +159,27 @@ fi
 echo ""
 
 # =============================================================================
-# Step 3: Start AIDE Agent (on same node as vLLM)
+# Step 3: Start AIDE Agent (CPU with SSH tunnel)
 # =============================================================================
 echo "Step 3: Submitting AIDE agent job..."
-echo "  AIDE will run on the same node as vLLM: $VLLM_NODE"
+echo "  AIDE will run on a CPU node and tunnel to vLLM node: $VLLM_NODE"
 
-AIDE_JOB=$(sbatch --parsable \
-    --partition="$PARTITION" \
-    --nodelist="$VLLM_NODE" \
-    scripts_hpc/slurm_aide_qwen.sh \
-    "$COMPETITION" \
-    "$VLLM_JOB" \
-    "$MODEL_SIZE" \
-    "auto:$GRADING_JOB")
+if [ -n "${AGENT_PARTITION}" ]; then
+    AIDE_JOB=$(sbatch --parsable \
+        --partition="${AGENT_PARTITION}" \
+        scripts_hpc/slurm_aide_qwen_feedback_chatgpt_cpu.sh \
+        "$COMPETITION" \
+        "$VLLM_JOB" \
+        "$MODEL_SIZE" \
+        "auto:$GRADING_JOB")
+else
+    AIDE_JOB=$(sbatch --parsable \
+        scripts_hpc/slurm_aide_qwen_feedback_chatgpt_cpu.sh \
+        "$COMPETITION" \
+        "$VLLM_JOB" \
+        "$MODEL_SIZE" \
+        "auto:$GRADING_JOB")
+fi
 
 echo "  AIDE agent job: $AIDE_JOB"
 echo ""
@@ -166,16 +190,21 @@ echo ""
 # Uncomment the following section to automatically cancel grading/vLLM servers
 # after the AIDE job completes (regardless of success/failure)
 
-echo "Step 4: Setting up automatic cleanup..."
-CLEANUP_JOB=$(sbatch --parsable \
-    --dependency=afterany:$AIDE_JOB \
-    --job-name=cleanup-aide-${AIDE_JOB} \
-    --partition=cpu \
-    --time=00:05:00 \
-    --output=logs/cleanup-${AIDE_JOB}.out \
-    --wrap="echo 'AIDE job $AIDE_JOB finished. Canceling supporting jobs...'; scancel $GRADING_JOB $VLLM_JOB; echo 'Cleanup complete.'")
-echo "  Cleanup job: $CLEANUP_JOB (will run after AIDE finishes)"
-echo ""
+if [ "${CLEANUP_MODE}" = "on" ]; then
+    echo "Step 4: Setting up automatic cleanup..."
+    CLEANUP_JOB=$(sbatch --parsable \
+        --dependency=afterany:$AIDE_JOB \
+        --job-name=cleanup-aide-${AIDE_JOB} \
+        --partition=cpu \
+        --time=00:05:00 \
+        --output=logs/cleanup-${AIDE_JOB}.out \
+        --wrap="echo 'AIDE job $AIDE_JOB finished. Canceling supporting jobs...'; scancel $GRADING_JOB $VLLM_JOB; echo 'Cleanup complete.'")
+    echo "  Cleanup job: $CLEANUP_JOB (will run after AIDE finishes)"
+    echo ""
+else
+    echo "Step 4: Automatic cleanup disabled"
+    echo ""
+fi
 
 # =============================================================================
 # Summary
@@ -197,7 +226,7 @@ echo "  squeue -u $USER"
 echo ""
 echo "Monitor logs:"
 echo "  tail -f logs/vllm-qwen${MODEL_SIZE}-${VLLM_JOB}.out"
-echo "  tail -f logs/aide-qwen-${AIDE_JOB}.out"
+echo "  tail -f logs/aide-qwen-chatgpt-cpu-${AIDE_JOB}.out"
 echo ""
 echo "Job status:"
 echo "  ./manage_qwen.sh slurm-status"
@@ -205,8 +234,7 @@ echo ""
 echo "Cancel all jobs manually:"
 echo "  scancel $GRADING_JOB $VLLM_JOB $AIDE_JOB"
 echo ""
-echo "Note: Servers will keep running after AIDE completes."
-echo "      Uncomment Step 4 in this script for auto-cleanup."
+echo "Note: Servers will keep running after AIDE completes when cleanup is off."
 echo ""
 echo "The AIDE agent will start automatically once vLLM loads the model."
 echo "This typically takes 15-20 minutes total."

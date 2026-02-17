@@ -4,12 +4,13 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --time=6:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=slurm_output/mlebench/grading-%j.out
 
 COMPETITION="${1:-spaceship-titanic}"
-DATA_DIR="/scratch/gpfs/KARTHIKN/rm4411/mle-bench-hpc/data"
-SIF_IMAGE="/scratch/gpfs/KARTHIKN/rm4411/mle-bench-hpc/containers/mlebench-env.sif"
+MLEBENCH_DIR="/scratch/gpfs/KARTHIKN/rm4411/mle-bench-hpc"
+DATA_DIR="/scratch/gpfs/KARTHIKN/rm4411/mle-cache/data"
+SIF_IMAGE="${MLEBENCH_DIR}/containers/mlebench-env.sif"
 GRADING_PORT=5000
 
 set -eo pipefail
@@ -47,6 +48,8 @@ apptainer exec \
     --no-home \
     --writable-tmpfs \
     --pwd /tmp \
+    --env PYTHONPATH=/mlebench \
+    --bind ${MLEBENCH_DIR}:/mlebench:ro \
     --bind ${DATA_DIR}:/data:ro \
     ${SIF_IMAGE} \
     /opt/conda/bin/conda run -n mleb python /mlebench/environment/run_grading_server.py \

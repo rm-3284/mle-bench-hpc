@@ -2,9 +2,8 @@
 #SBATCH --job-name=vllm-qwen30b
 #SBATCH --output=logs/vllm-qwen30b-%j.out
 #SBATCH --error=logs/vllm-qwen30b-%j.err
-#SBATCH --account=mle_agent
 #SBATCH --nodes=1
-#SBATCH --partition=pli
+#SBATCH --partition=ailab
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
