@@ -13,6 +13,11 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
     export CODE_DIR=/home/code
     export AGENT_DIR=/home/agent
 
+%setup
+    ROOTFS=${APPTAINER_ROOTFS:-$SINGULARITY_ROOTFS}
+    mkdir -p "$ROOTFS/opt"
+    cp /scratch/gpfs/KARTHIKN/rm4411/mle-bench-hpc/environment/requirements.txt "$ROOTFS/opt/requirements.txt"
+
 %post
     # Update and install dependencies
     apt-get update && apt-get install -y \
@@ -42,10 +47,16 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
     . /opt/conda/etc/profile.d/conda.sh
     conda activate agent
 
+    # Install full environment requirements to avoid runtime pip installs
+    pip install --no-cache-dir -r /opt/requirements.txt
+
     # Install AIDE and dependencies
     # AIDE was edited to allow vllm access
+    # Use --force-reinstall to ensure we get latest from git, not cached version
+    pip install --no-cache-dir --force-reinstall \
+        git+https://github.com/rm-3284/aideml@main
+    
     pip install --no-cache-dir \
-        git+https://github.com/rm-3284/aideml \
         openai \
         anthropic \
         google-generativeai \
