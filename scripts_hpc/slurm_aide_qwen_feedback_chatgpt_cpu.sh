@@ -3,11 +3,10 @@
 #SBATCH --output=logs/aide-qwen-chatgpt-cpu-%j.out
 #SBATCH --error=logs/aide-qwen-chatgpt-cpu-%j.err
 #SBATCH --nodes=1
-#SBATCH --partition=ailab
+#SBATCH --partition=cpu
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --gres=gpu:1
 #SBATCH --time=24:00:00
 
 # =============================================================================
