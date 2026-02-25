@@ -14,6 +14,8 @@
 
 set -e
 
+export XDG_CACHE_HOME=/scratch/gpfs/KARTHIKN/rm4411/cache
+
 echo "========================================"
 echo "Starting Qwen3-30B vLLM Server"
 echo "========================================"
@@ -71,7 +73,9 @@ echo ""
 
 # Run the container
 apptainer run --nv \
+    --env XDG_CACHE_HOME=/scratch/gpfs/KARTHIKN/rm4411/cache \
     --bind "${HF_HOME}:/root/.cache/huggingface" \
+    --bind "/scratch/gpfs/KARTHIKN/rm4411/tmp:/tmp" \
     "$CONTAINER_FILE"
 
 echo ""

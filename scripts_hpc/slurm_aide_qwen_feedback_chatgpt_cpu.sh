@@ -3,10 +3,11 @@
 #SBATCH --output=logs/aide-qwen-chatgpt-cpu-%j.out
 #SBATCH --error=logs/aide-qwen-chatgpt-cpu-%j.err
 #SBATCH --nodes=1
-#SBATCH --partition=cpu
+#SBATCH --partition=ailab
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=64G
+#SBATCH --gres=gpu:1
 #SBATCH --time=24:00:00
 
 # =============================================================================
@@ -15,9 +16,9 @@
 # This script runs the AIDE agent on a CPU node, creates an SSH tunnel to the
 # Qwen vLLM server node, and uses OpenAI for feedback.
 # =============================================================================
-
 set -eo pipefail
 module load proxy/default
+export XDG_CACHE_HOME=/scratch/gpfs/KARTHIKN/rm4411/cache
 
 # Proxy bypass list will be set after node hostnames are resolved
 # (See below after Grading Server Setup section)
@@ -44,21 +45,26 @@ OUTPUT_BASE="${MLEBENCH_DIR}/runs"
 DOTENV_FILE="${MLEBENCH_DIR}/.env"
 
 # Agent configuration
-TIME_LIMIT_SECS=900
+TIME_LIMIT_SECS=21600  # 6 hours
 STEP_LIMIT=500
 
 # vLLM server configuration
+
+# Use different local port for agent to avoid conflicts
 if [ "$MODEL_SIZE" == "30b" ]; then
     VLLM_PORT=8000
+    AGENT_LOCAL_PORT=18000
     MODEL_NAME="qwen3-30b"
 else
     VLLM_PORT=8001
+    AGENT_LOCAL_PORT=18001
     MODEL_NAME="qwen3-80b"
 fi
 
 AIDE_CODE_MODEL="${AIDE_CODE_MODEL:-${MODEL_NAME}}"
 
-VLLM_API_BASE="http://localhost:${VLLM_PORT}/v1"
+VLLM_API_BASE="http://localhost:${AGENT_LOCAL_PORT}/v1"
+
 
 # Output directory with run-group structure
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H-%M-%S-UTC")
@@ -66,6 +72,18 @@ RUN_GROUP_DIR="${OUTPUT_BASE}/${TIMESTAMP}_run-group_aide"
 RUN_ID="${SLURM_JOB_ID}"
 OUTPUT_DIR="${RUN_GROUP_DIR}/${COMPETITION}_${RUN_ID}"
 mkdir -p "${OUTPUT_DIR}"/{submission,logs,code,workspaces}
+
+# Create a dedicated tmp and cache directory for container temp files and Apptainer cache
+HOST_TMPDIR="/scratch/gpfs/KARTHIKN/rm4411/tmp"
+HOST_CACHEDIR="/scratch/gpfs/KARTHIKN/rm4411/cache"
+mkdir -p "$HOST_TMPDIR"
+mkdir -p "$HOST_CACHEDIR"
+
+# Set Apptainer cache and tmp to large scratch locations (best practice for HPC)
+export APPTAINER_CACHEDIR="$HOST_CACHEDIR"
+export APPTAINER_TMPDIR="$HOST_TMPDIR"
+export XDG_CACHE_HOME="$HOST_CACHEDIR"
+export TMPDIR="$HOST_TMPDIR"
 
 # =============================================================================
 # Load .env if present
@@ -180,7 +198,7 @@ GRADING_HOST=$(echo "$GRADING_SERVER" | sed 's|^https\?://||' | cut -d: -f1)
 # Include: localhost, 127.0.0.1, Qwen node, grading server node
 export no_proxy="localhost,127.0.0.1,${QWEN_NODE},${GRADING_HOST}"
 export NO_PROXY="$no_proxy"  # Some tools use uppercase
-export AIDE_LOG_LEVEL="INFO"
+export AIDE_LOG_LEVEL="DEBUG"
 
 echo "Proxy bypass list (no_proxy): $no_proxy"
 
@@ -215,14 +233,15 @@ cleanup_port() {
 # Create SSH tunnel to Qwen vLLM server
 # =============================================================================
 echo ""
+
 echo "Checking for port conflicts..."
-if ! cleanup_port "$VLLM_PORT"; then
-    echo "ERROR: Cannot free port $VLLM_PORT"
+if ! cleanup_port "$AGENT_LOCAL_PORT"; then
+    echo "ERROR: Cannot free port $AGENT_LOCAL_PORT"
     exit 1
 fi
 
-echo "Creating SSH tunnel to ${QWEN_NODE}:${VLLM_PORT}..."
-ssh -N -L "${VLLM_PORT}:localhost:${VLLM_PORT}" "${QWEN_NODE}" &
+echo "Creating SSH tunnel to ${QWEN_NODE}:${VLLM_PORT} (local port ${AGENT_LOCAL_PORT})..."
+ssh -N -L "${AGENT_LOCAL_PORT}:localhost:${VLLM_PORT}" "${QWEN_NODE}" &
 TUNNEL_PID=$!
 
 # Enhanced trap function to clean up tunnel and ports
@@ -241,7 +260,7 @@ sleep 2
 # Verify tunnel is alive
 if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
     echo "✗ SSH tunnel process died immediately. Checking SSH connectivity..."
-    echo "Run this manually to debug: ssh -v -N -L ${VLLM_PORT}:localhost:${VLLM_PORT} ${QWEN_NODE}"
+    echo "Run this manually to debug: ssh -v -N -L ${AGENT_LOCAL_PORT}:localhost:${VLLM_PORT} ${QWEN_NODE}"
     exit 1
 fi
 echo "✓ SSH tunnel established (PID $TUNNEL_PID)"
@@ -252,36 +271,24 @@ echo "✓ SSH tunnel established (PID $TUNNEL_PID)"
 echo ""
 echo "Running tunnel diagnostics..."
 
-# Test 1: Check if localhost:8000 is listening
-echo "  Test 1: Port listening check..."
-if nc -z 127.0.0.1 $VLLM_PORT 2>/dev/null; then
-    echo "    ✓ Port $VLLM_PORT is listening on localhost"
-else
-    echo "    ✗ Port $VLLM_PORT NOT listening on localhost"
-    echo "    SSH tunnel may not have established properly"
-fi
-
-# Test 2: Direct netstat check
-echo "  Test 2: Netstat check..."
-NETSTAT_OUTPUT=$(netstat -tlnp 2>/dev/null | grep -E ":$VLLM_PORT|LISTEN" | head -5 || true)
-if [ -n "$NETSTAT_OUTPUT" ]; then
-    echo "    $NETSTAT_OUTPUT"
-else
-    echo "    (netstat not available, trying ss instead)"
-    ss -tlnp 2>/dev/null | grep -E ":$VLLM_PORT" || true
-fi
-
-# Test 3: Verbose curl test (first attempt only)
-echo "  Test 3: First curl attempt (verbose, 5 second timeout)..."
-CURL_OUTPUT=$(timeout 5 curl -v http://localhost:${VLLM_PORT}/v1/models 2>&1 | head -20 || true)
-if echo "$CURL_OUTPUT" | grep -q "Connected\|HTTP"; then
-    echo "    ✓ Curl connected (first line of response:)"
-    echo "$CURL_OUTPUT" | head -3 | sed 's/^/      /'
-else
-    echo "    ✗ Curl failed to connect"
-    echo "    Output:"
+echo "Test 1: Port listening check..."
+        if nc -z 127.0.0.1 $AGENT_LOCAL_PORT 2>/dev/null; then
+            echo "    ✓ Port $AGENT_LOCAL_PORT is listening on localhost"
+        else
+            echo "    ✗ Port $AGENT_LOCAL_PORT NOT listening on localhost"
+            echo "    (This may be normal if vLLM server is not yet started; continuing to retry...)"
+        fi
+echo "Test 2: Netstat check..."
+        netstat -tlnp 2>/dev/null | grep -E ":$AGENT_LOCAL_PORT|LISTEN" | head -5 || true
+echo "Test 3: First curl attempt (verbose, 5 second timeout)..."
+        CURL_OUTPUT=$(timeout 5 curl -v http://localhost:${AGENT_LOCAL_PORT}/v1/models 2>&1 | head -20 || true)
+        echo "$CURL_OUTPUT"
+        if echo "$CURL_OUTPUT" | grep -q 'Failed to connect'; then
+                echo "    ✗ Curl failed to connect"
+        else
+                echo "    ✓ Curl succeeded"
+    fi
     echo "$CURL_OUTPUT" | sed 's/^/      /'
-fi
 
 # Test 4: Check tunnel process still alive
 echo "  Test 4: Tunnel process status..."
@@ -315,6 +322,8 @@ for i in $(seq 1 $MAX_RETRIES); do
         echo ""
         echo "Last error (curl exit code $CURL_EXIT):"
         echo "  $LAST_ERROR"
+        echo "Terminating tunnel and exiting."
+        cleanup_tunnel
         exit 1
     fi
     if [ $((i % 4)) -eq 0 ]; then
@@ -411,6 +420,55 @@ fi
 echo ""
 echo "Starting AIDE agent..."
 echo ""
+echo "=== Matplotlib cache directory diagnostics ==="
+apptainer exec \
+    --contain \
+    --cleanenv \
+    --writable-tmpfs \
+    --env XDG_CACHE_HOME="$HOST_CACHEDIR" \
+    --env TMPDIR="$HOST_TMPDIR" \
+    --env APPTAINER_CACHEDIR="$HOST_CACHEDIR" \
+    --env APPTAINER_TMPDIR="$HOST_TMPDIR" \
+    --bind "$HOST_TMPDIR:/tmp" \
+    --bind "$HOST_CACHEDIR:/scratch/gpfs/KARTHIKN/rm4411/cache" \
+    ${SIF_IMAGE} \
+    bash -c "id; umask; ls -ld /scratch/gpfs/KARTHIKN/rm4411/cache/matplotlib; touch /scratch/gpfs/KARTHIKN/rm4411/cache/matplotlib/diagnostic_testfile && ls -l /scratch/gpfs/KARTHIKN/rm4411/cache/matplotlib/diagnostic_testfile"
+# ===================== OSError Debugging + PyTorch Cache =====================
+# Set TORCH_HOME to a unique per-job directory to avoid collisions
+export TORCH_HOME=/scratch/gpfs/KARTHIKN/rm4411/cache/torch_job_${SLURM_JOB_ID}
+mkdir -p "$TORCH_HOME"
+
+# Clean up TORCH_HOME after job ends
+cleanup_torch_home() {
+    echo "Cleaning up TORCH_HOME: $TORCH_HOME"
+    rm -rf "$TORCH_HOME"
+}
+trap cleanup_torch_home EXIT
+
+echo "=== OSError Debugging Diagnostics (host) ==="
+echo "--- Disk usage (df -h) ---"; df -h
+echo "--- Inode usage (df -ih) ---"; df -ih
+echo "--- Disk usage (du -sh $OUTPUT_DIR) ---"; du -sh "$OUTPUT_DIR"
+echo "--- Disk usage (du -sh $TORCH_HOME) ---"; du -sh "$TORCH_HOME"
+echo "--- Disk usage (du -sh /tmp) ---"; du -sh /tmp
+echo "--- Quota (if available) ---"; (quota -s 2>/dev/null || echo "No quota command")
+echo "--- Environment variables (selected) ---"; env | grep -E 'HOME|TMP|CACHE|USER|SLURM|PWD|TORCH_HOME'
+echo "--- Host free (free -h) ---"; free -h || true
+
+# Trap to print diagnostics on error/exit (runs before cleanup)
+oserror_debug_trap() {
+    echo "=== OSError Debugging Diagnostics (on EXIT) ==="
+    echo "--- Disk usage (df -h) ---"; df -h
+    echo "--- Inode usage (df -ih) ---"; df -ih
+    echo "--- Disk usage (du -sh $OUTPUT_DIR) ---"; du -sh "$OUTPUT_DIR"
+    echo "--- Disk usage (du -sh $TORCH_HOME) ---"; du -sh "$TORCH_HOME"
+    echo "--- Disk usage (du -sh /tmp) ---"; du -sh /tmp
+    echo "--- Quota (if available) ---"; (quota -s 2>/dev/null || echo "No quota command")
+    echo "--- Environment variables (selected) ---"; env | grep -E 'HOME|TMP|CACHE|USER|SLURM|PWD|TORCH_HOME'
+    echo "--- Host free (free -h) ---"; free -h || true
+}
+trap oserror_debug_trap EXIT
+# Note: If the agent cannot access the internet, model download will fail with a connection error, not OSError 28. OSError 28 specifically means the target device is out of space or inodes.
 
 # Clear conda environment variables
 unset CONDA_EXE CONDA_PREFIX CONDA_PYTHON_EXE CONDA_DEFAULT_ENV CONDA_SHLVL
@@ -419,6 +477,11 @@ apptainer exec \
     --contain \
     --cleanenv \
     --writable-tmpfs \
+    --nv \
+    --env XDG_CACHE_HOME="$HOST_CACHEDIR" \
+    --env TMPDIR="$HOST_TMPDIR" \
+    --env APPTAINER_CACHEDIR="$HOST_CACHEDIR" \
+    --env APPTAINER_TMPDIR="$HOST_TMPDIR" \
     --env COMPETITION_ID=${COMPETITION} \
     --env GRADING_SERVER=${GRADING_SERVER} \
     --env TIME_LIMIT_SECS=${TIME_LIMIT_SECS} \
@@ -432,7 +495,7 @@ apptainer exec \
     --env AIDE_PROVIDER="${AIDE_PROVIDER}" \
     --env AIDE_CODE_PROVIDER="${AIDE_CODE_PROVIDER}" \
     --env AIDE_FEEDBACK_PROVIDER="${AIDE_FEEDBACK_PROVIDER}" \
-    --env AIDE_LOG_LEVEL="DEBUG" \
+    --env AIDE_LOG_LEVEL="INFO" \
     --env no_proxy="${no_proxy}" \
     --env NO_PROXY="${no_proxy}" \
     --env PYTHONPATH="${PYTHONPATH}" \
@@ -447,6 +510,8 @@ apptainer exec \
     --bind ${OVERLAY_DIR}/additional_notes.txt:/home/agent/additional_notes.txt:ro \
     --bind ${PYHOOK_DIR}:/home/agent/pyhook:ro \
     --bind ${MLEBENCH_DIR}/scripts_hpc/aide_start_qwen.sh:/home/agent/start.sh:ro \
+    --bind "$HOST_TMPDIR:/tmp" \
+    --bind "$HOST_CACHEDIR:/scratch/gpfs/KARTHIKN/rm4411/cache" \
     ${ENV_BIND} \
     ${SIF_IMAGE} \
     bash /home/agent/start.sh

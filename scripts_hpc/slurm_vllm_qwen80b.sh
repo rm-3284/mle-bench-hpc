@@ -3,7 +3,8 @@
 #SBATCH --output=logs/vllm-qwen80b-%j.out
 #SBATCH --error=logs/vllm-qwen80b-%j.err
 #SBATCH --nodes=1
-#SBATCH --partition=pli-c
+#SBATCH --account=mle_agent
+#SBATCH --partition=pli
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:2
@@ -58,6 +59,7 @@ fi
 mkdir -p "$HF_HOME"
 echo "HF Cache directory: $HF_HOME"
 
+export XDG_CACHE_HOME=/scratch/gpfs/KARTHIKN/rm4411/cache
 # Print server info
 echo ""
 echo "Server Configuration:"
@@ -71,7 +73,9 @@ echo ""
 
 # Run the container
 apptainer run --nv \
+    --env XDG_CACHE_HOME=/scratch/gpfs/KARTHIKN/rm4411/cache \
     --bind "${HF_HOME}:/root/.cache/huggingface" \
+    --bind /scratch/gpfs/KARTHIKN/rm4411/tmp:/tmp \
     "$CONTAINER_FILE"
 
 echo ""

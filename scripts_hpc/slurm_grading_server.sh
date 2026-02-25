@@ -7,6 +7,8 @@
 #SBATCH --time=24:00:00
 #SBATCH --output=slurm_output/mlebench/grading-%j.out
 
+export XDG_CACHE_HOME=/scratch/gpfs/KARTHIKN/rm4411/cache
+
 COMPETITION="${1:-spaceship-titanic}"
 MLEBENCH_DIR="/scratch/gpfs/KARTHIKN/rm4411/mle-bench-hpc"
 DATA_DIR="/scratch/gpfs/KARTHIKN/rm4411/mle-cache/data"
@@ -51,6 +53,8 @@ apptainer exec \
     --env PYTHONPATH=/mlebench \
     --bind ${MLEBENCH_DIR}:/mlebench:ro \
     --bind ${DATA_DIR}:/data:ro \
+    --env XDG_CACHE_HOME=/scratch/gpfs/KARTHIKN/rm4411/cache \
+    --bind /scratch/gpfs/KARTHIKN/rm4411/tmp:/tmp \
     ${SIF_IMAGE} \
     /opt/conda/bin/conda run -n mleb python /mlebench/environment/run_grading_server.py \
         --competition-id "${COMPETITION}" \
