@@ -99,8 +99,8 @@ echo "=============================================="
 
 # GPU MPS partitioning
 MPS_THREAD_PCT=$(( 100 / ${#competitions[@]} ))
-GPU_MEM_PER_AGENT="30G"  # Adjust as needed
-MPS_MEM_LIMIT="0=${GPU_MEM_PER_AGENT}"
+# Slurm reports mem-per-cpu in MB. Fallback keeps behavior predictable if unset.
+MEM_PER_CPU_MB="${SLURM_MEM_PER_CPU:-8192}"
 PYTORCH_ALLOC_CONF="expandable_segments:True,max_split_size_mb:512,garbage_collection_threshold:0.8"
 
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H-%M-%S-UTC")
@@ -108,6 +108,58 @@ RUN_GROUP_DIR="runs/${TIMESTAMP}_run-group_aide"
 mkdir -p "$RUN_GROUP_DIR"
 
 declare -a ALL_TUNNEL_PIDS
+GRADING_CLEANUP_DONE=0
+
+cleanup_grading_servers() {
+    if [[ "${GRADING_CLEANUP_DONE}" -eq 1 ]]; then
+        return
+    fi
+
+    declare -a grading_job_ids_to_cancel=()
+    declare -A seen_job_ids=()
+
+    # Accept comma/space/newline separated ids from upstream launcher.
+    if [[ -n "${GRADING_SERVER_JOB_IDS:-}" ]]; then
+        while read -r grading_job_id; do
+            if [[ -n "$grading_job_id" && -z "${seen_job_ids[$grading_job_id]:-}" ]]; then
+                seen_job_ids[$grading_job_id]=1
+                grading_job_ids_to_cancel+=("$grading_job_id")
+            fi
+        done < <(echo "$GRADING_SERVER_JOB_IDS" | tr ', ' '\n' | sed '/^$/d')
+    fi
+
+    # Fallback: resolve grading job ids from known grading URLs via address files.
+    if [[ ${#grading_job_ids_to_cancel[@]} -eq 0 ]]; then
+        ADDR_DIR="$HOME/.mlebench_addresses"
+        for server_url in "${grading_servers[@]}"; do
+            if [[ -d "$ADDR_DIR" ]]; then
+                for addr_file in "$ADDR_DIR"/grading_server_*; do
+                    [[ -f "$addr_file" ]] || continue
+                    if grep -Fxq "$server_url" "$addr_file" 2>/dev/null; then
+                        grading_job_id="${addr_file##*_}"
+                        if [[ -n "$grading_job_id" && -z "${seen_job_ids[$grading_job_id]:-}" ]]; then
+                            seen_job_ids[$grading_job_id]=1
+                            grading_job_ids_to_cancel+=("$grading_job_id")
+                        fi
+                    fi
+                done
+            fi
+        done
+    fi
+
+    if [[ ${#grading_job_ids_to_cancel[@]} -gt 0 ]]; then
+        echo "Cleaning up grading server jobs: ${grading_job_ids_to_cancel[*]}"
+        for grading_job_id in "${grading_job_ids_to_cancel[@]}"; do
+            scancel "$grading_job_id" 2>/dev/null || true
+            echo "  Requested cancel for grading server job: $grading_job_id"
+        done
+    else
+        echo "No grading server jobs found to clean up."
+    fi
+
+    GRADING_CLEANUP_DONE=1
+}
+
 cleanup_all_tunnels() {
     echo "Cleaning up all SSH tunnels..."
     for pid in "${ALL_TUNNEL_PIDS[@]}"; do
@@ -117,6 +169,8 @@ cleanup_all_tunnels() {
             echo "  Terminated tunnel PID $pid"
         fi
     done
+    cleanup_grading_servers
+    rm -rf "$LOCAL_DATA_BASE" 2>/dev/null || true
 }
 trap cleanup_all_tunnels EXIT
 
@@ -131,7 +185,10 @@ level = getattr(logging, level_name, logging.INFO)
 logging.getLogger().setLevel(level)
 logging.getLogger("aide").setLevel(level)
 PY
-if [[ "$CODE_MODEL" == *80b* ]]; then
+if [[ "$CODE_MODEL" == *coder* ]]; then
+    VLLM_PORT=8002
+    AGENT_LOCAL_PORT_BASE=18002
+elif [[ "$CODE_MODEL" == *80b* ]]; then
     VLLM_PORT=8001
     AGENT_LOCAL_PORT_BASE=18001
 else
@@ -148,6 +205,29 @@ else
 fi
 
 DATA_DIR="/scratch/gpfs/KARTHIKN/rm4411/mle-cache/data"
+
+# Ensure host-side MPS bind source exists before container launch.
+MPS_HOST_DIR="/tmp/nvidia-mps"
+mkdir -p "$MPS_HOST_DIR"
+
+LOCAL_DATA_BASE="/tmp/${SLURM_JOB_ID}_data"
+mkdir -p "$LOCAL_DATA_BASE"
+echo "=============================================="
+echo "Staging data to $LOCAL_DATA_BASE"
+for comp in "${competitions[@]}"; do
+    src="$DATA_DIR/${comp}/prepared/public"
+    dst="$LOCAL_DATA_BASE/${comp}"
+    if [ -d "$src" ]; then
+        echo "Copying $comp ..."
+        mkdir -p "$dst"
+        rsync -rlt --no-perms "$src/" "$dst/" &
+    else
+        echo "Source not found for $comp: $src"
+    fi
+done
+wait
+echo "Data staging done."
+echo "=============================================="
 
 # --- vLLM server connectivity check (before launching agents) ---
 QWEN_NODE=$(squeue -j "$VLLM_SERVER_JOB_ID" -h -o "%N" 2>/dev/null || true)
@@ -278,6 +358,10 @@ for ((i=0; i<num_agents; i++)); do
     # cpu_per_agent
     current_agent_cpu_count=$(echo "${agent_cpu_lists[$i]}" | tr -cd ',' | wc -c)
     current_agent_cpu_count=$((current_agent_cpu_count + 1))
+    agent_mem_mb=$(( current_agent_cpu_count * MEM_PER_CPU_MB ))
+    GPU_MEM_PER_AGENT="${agent_mem_mb}M"
+    MPS_MEM_LIMIT="0=${GPU_MEM_PER_AGENT}"
+    echo "  Agent mem limit: $GPU_MEM_PER_AGENT (${current_agent_cpu_count} CPUs x ${MEM_PER_CPU_MB}MB)"
 
         # Launch agent using srun and capture job step id
         echo "Launching agent $i ($comp) on cores $cpu_range with grading server $server..."
@@ -321,6 +405,7 @@ for ((i=0; i<num_agents; i++)); do
                     --env AIDE_CODE_API_BASE="$VLLM_API_BASE" \
                     --env AIDE_FEEDBACK_MODEL="$FEEDBACK_MODEL" \
                     --env AIDE_FEEDBACK_API_BASE="$FEEDBACK_API_BASE" \
+                    --env AIDE_LOG_LEVEL="$AIDE_LOG_LEVEL" \
                     --env AIDE_AGENT_STEPS="$step_limit" \
                     --env AIDE_PROVIDER="${AIDE_PROVIDER}" \
                     --env AIDE_CODE_PROVIDER="${AIDE_CODE_PROVIDER}" \
@@ -328,7 +413,7 @@ for ((i=0; i<num_agents; i++)); do
                     --env no_proxy="$no_proxy" \
                     --env NO_PROXY="$no_proxy" \
                     --env PYTHONPATH="/home/agent/pyhook${PYTHONPATH:+:${PYTHONPATH}}" \
-                    --bind "$DATA_DIR/${comp}/prepared/public:/home/data:ro" \
+                    --bind "$LOCAL_DATA_BASE/${comp}:/home/data:ro" \
                     --bind "$out_dir/submission:/home/submission" \
                     --bind "$out_dir/logs:/home/logs" \
                     --bind "$out_dir/code:/home/code" \
@@ -339,6 +424,7 @@ for ((i=0; i<num_agents; i++)); do
                     --bind "$OVERLAY_DIR/additional_notes.txt:/home/agent/additional_notes.txt:ro" \
                     --bind "$PYHOOK_SHARED_DIR:/home/agent/pyhook:ro" \
                     --bind "$HOST_TMPDIR:/tmp" \
+                    --bind "/tmp/nvidia-mps:/tmp/nvidia-mps" \
                     --bind "$HOST_CACHEDIR:/scratch/gpfs/KARTHIKN/rm4411/cache" \
                     --bind "$(pwd)/scripts_hpc/aide_start_qwen.sh:/home/agent/start.sh:ro" \
                     $ENV_BIND \
@@ -502,6 +588,8 @@ for i in "${!competitions[@]}"; do
     echo "  Log err: $log_err"
 done
 echo "=============================================="
+
+cleanup_grading_servers
 
 # Organize all agent error logs into a summary file
 SUMMARY_ERR_LOG="${RUN_GROUP_DIR}/all_agents_error_summary_${SLURM_JOB_ID}.log"
