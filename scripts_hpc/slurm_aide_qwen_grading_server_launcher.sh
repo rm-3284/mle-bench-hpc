@@ -1,8 +1,8 @@
+#!/bin/bash
+
 # User can specify these, or use defaults
 CPUS_PER_AGENT=${CPUS_PER_AGENT:-2}
-MEM_PER_CPU=${MEM_PER_CPU:-32G}
-
-#!/bin/bash
+MEM_PER_CPU=${MEM_PER_CPU:-16G}
 
 
 # file1: grading server launcher
@@ -15,7 +15,7 @@ TIME_LIMIT_SEC="${2:-21600}"
 STEP_LIMIT="${3:-500}"
 AIDE_LOG_LEVEL="${4:-INFO}"
 CODE_MODEL="${5:-qwen3-coder}"
-FEEDBACK_MODEL="${6:-gpt-4o-mini}"
+FEEDBACK_MODEL="${6:-gpt-5-mini-2025-08-07}"
 shift 6
 competitions=("$@")
 
@@ -68,8 +68,9 @@ TOTAL_MEM_STR="${TOTAL_MEM_G}G"
 
 echo "Launching multi-agent job with $TOTAL_CPUS CPUs and $TOTAL_MEM_STR memory..."
 GRADING_SERVER_JOB_IDS=$(IFS=,; echo "${server_job_ids[*]}")
+export CPUS_PER_AGENT MEM_PER_CPU
 agent_job_id=$(sbatch --cpus-per-task=$TOTAL_CPUS --mem=$TOTAL_MEM_STR --output="$RUN_LOG_DIR/agent_multi_%j.out" --error="$RUN_LOG_DIR/agent_multi_%j.err" \
-    --export=ALL,GRADING_SERVER_JOB_IDS="$GRADING_SERVER_JOB_IDS" \
+    --export=ALL,GRADING_SERVER_JOB_IDS="$GRADING_SERVER_JOB_IDS",CPUS_PER_AGENT="$CPUS_PER_AGENT",MEM_PER_CPU="$MEM_PER_CPU" \
     scripts_hpc/slurm_aide_qwen_multi_agent_launcher.sh "$VLLM_SERVER_JOB_ID" "$TIME_LIMIT_SEC" "$STEP_LIMIT" "$AIDE_LOG_LEVEL" "$CODE_MODEL" "$FEEDBACK_MODEL" "${competitions[@]}" "${server_urls[@]}")
 agent_log_out="$RUN_LOG_DIR/agent_multi_${agent_job_id}.out"
 agent_log_err="$RUN_LOG_DIR/agent_multi_${agent_job_id}.err"

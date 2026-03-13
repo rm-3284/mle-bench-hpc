@@ -73,34 +73,93 @@ for p in parts:
 print(','.join(map(str, expanded)))
 ")
 
-### PATCH END
 IFS=',' read -r -a cpu_list <<< "$cpu_list_str"
 num_agents=${#competitions[@]}
 total_cpus=${#cpu_list[@]}
+
+requested_cpus_per_agent="${CPUS_PER_AGENT:-}"
+use_fixed_cpus=0
+if [[ -n "$requested_cpus_per_agent" && "$requested_cpus_per_agent" =~ ^[0-9]+$ && "$requested_cpus_per_agent" -gt 0 ]]; then
+    required_cpus=$(( requested_cpus_per_agent * num_agents ))
+    if (( required_cpus <= total_cpus )); then
+        use_fixed_cpus=1
+    else
+        echo "WARNING: Requested CPUS_PER_AGENT=$requested_cpus_per_agent for $num_agents agents requires $required_cpus CPUs, but only $total_cpus are available. Falling back to even split."
+    fi
+fi
+
 base_cpus_per_agent=$(( total_cpus / num_agents ))
 extra_cpus=$(( total_cpus % num_agents ))
 declare -a agent_cpu_lists
+declare -a agent_cpu_counts
 cpu_idx=0
 for ((i=0; i<num_agents; i++)); do
-    n_cpus=$base_cpus_per_agent
-    if (( i < extra_cpus )); then
-        n_cpus=$((n_cpus + 1))
+    if (( use_fixed_cpus == 1 )); then
+        n_cpus=$requested_cpus_per_agent
+    else
+        n_cpus=$base_cpus_per_agent
+        if (( i < extra_cpus )); then
+            n_cpus=$((n_cpus + 1))
+        fi
     fi
+
+    if (( n_cpus < 1 )); then
+        echo "ERROR: Computed 0 CPUs for agent $i. Reduce agent count or request more CPUs."
+        exit 1
+    fi
+
     agent_cpu_lists[$i]=$(printf "%s," "${cpu_list[@]:$cpu_idx:$n_cpus}" | sed 's/,$//')
+    agent_cpu_counts[$i]="$n_cpus"
     cpu_idx=$((cpu_idx + n_cpus))
 done
 
 echo "=============================================="
 echo "Available CPUs: $(printf "%s," "${cpu_list[@]}" | sed 's/,$//')"
 for ((i=0; i<num_agents; i++)); do
-    echo "Agent $i (${competitions[$i]}) assigned CPUs: ${agent_cpu_lists[$i]}"
+    echo "Agent $i (${competitions[$i]}) assigned CPUs: ${agent_cpu_lists[$i]} (count=${agent_cpu_counts[$i]})"
 done
 echo "=============================================="
 
 # GPU MPS partitioning
 MPS_THREAD_PCT=$(( 100 / ${#competitions[@]} ))
-# Slurm reports mem-per-cpu in MB. Fallback keeps behavior predictable if unset.
-MEM_PER_CPU_MB="${SLURM_MEM_PER_CPU:-8192}"
+
+parse_mem_to_mb() {
+    local raw="$1"
+    local upper
+    upper=$(echo "$raw" | tr '[:lower:]' '[:upper:]' | tr -d ' ')
+
+    if [[ "$upper" =~ ^[0-9]+$ ]]; then
+        # Slurm MEM_PER_CPU is often in MB when no unit suffix is provided.
+        echo "$upper"
+        return 0
+    elif [[ "$upper" =~ ^([0-9]+)G$ ]]; then
+        echo $(( BASH_REMATCH[1] * 1024 ))
+        return 0
+    elif [[ "$upper" =~ ^([0-9]+)M$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+
+    return 1
+}
+
+# Prefer explicit launcher value. Fall back to Slurm value, then a safe default.
+if [[ -n "${MEM_PER_CPU:-}" ]]; then
+    MEM_PER_CPU_MB=$(parse_mem_to_mb "$MEM_PER_CPU") || {
+        echo "WARNING: Could not parse MEM_PER_CPU='$MEM_PER_CPU'. Falling back to SLURM_MEM_PER_CPU/default."
+        MEM_PER_CPU_MB=""
+    }
+fi
+
+if [[ -z "${MEM_PER_CPU_MB:-}" ]]; then
+    if [[ -n "${SLURM_MEM_PER_CPU:-}" ]]; then
+        MEM_PER_CPU_MB=$(parse_mem_to_mb "$SLURM_MEM_PER_CPU") || MEM_PER_CPU_MB=8192
+    else
+        MEM_PER_CPU_MB=8192
+    fi
+fi
+
+echo "Effective MEM_PER_CPU_MB: ${MEM_PER_CPU_MB} (MEM_PER_CPU='${MEM_PER_CPU:-unset}', SLURM_MEM_PER_CPU='${SLURM_MEM_PER_CPU:-unset}')"
 PYTORCH_ALLOC_CONF="expandable_segments:True,max_split_size_mb:512,garbage_collection_threshold:0.8"
 
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H-%M-%S-UTC")
@@ -356,8 +415,7 @@ for ((i=0; i<num_agents; i++)); do
     done
 
     # cpu_per_agent
-    current_agent_cpu_count=$(echo "${agent_cpu_lists[$i]}" | tr -cd ',' | wc -c)
-    current_agent_cpu_count=$((current_agent_cpu_count + 1))
+    current_agent_cpu_count="${agent_cpu_counts[$i]}"
     agent_mem_mb=$(( current_agent_cpu_count * MEM_PER_CPU_MB ))
     GPU_MEM_PER_AGENT="${agent_mem_mb}M"
     MPS_MEM_LIMIT="0=${GPU_MEM_PER_AGENT}"
