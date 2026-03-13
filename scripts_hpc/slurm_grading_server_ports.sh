@@ -2,7 +2,8 @@
 #SBATCH --job-name=mlebench-grading
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=1
+#SBATCH --partition=cpu
 #SBATCH --mem=8G
 #SBATCH --time=24:00:00
 #SBATCH --output=slurm_output/mlebench/grading-%j.out
